@@ -71,6 +71,22 @@ foreach ( my $vault ( $@vaults) ) {
 #check for files in test vaults
 
 #test calculating tar file size
+# zero sized files have 3 metadata blocks * 512
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 0 ), 1536, 'zero length files tar member size calculated ok = 3 meta + 0 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 1 ), 2048, 'single byte files tar member size calculated ok = 3 meta + 1 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 511 ), 2048, 'block minus one byte files tar member size calculated ok = 3 meta + 1 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 512 ), 2048, 'single record files tar member size calculated ok = 3 meta + 1 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 513 ), 2560, 'single record + 1 byte files tar member size calculated ok = 3 meta + 2 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 1024 ), 2560, 'two record files tar member size calculated ok = 3 meta + 2 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 10240 ), 11776, 'blocking factor sized tar member size calculated ok = 3 meta + 10 content');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 10737418240 ), 10737419776, '10 GiB tar member size calculated ok = 3 meta + 20971520 content');
+
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 0 ), 10240, '0 sized output file tar output size calculated ok = 10 blocks');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 10240 ), 10240, '10 block sized output file tar output size calculated ok = 10 blocks');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 10240 ), 20480, '10 block + 1 byte sized output file tar output size calculated ok = 20 blocks');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 20480 ), 20480, '20 block sized output file tar output size calculated ok = 20 blocks');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 107374182400 ), 107374182400, '100 GiB sized output file tar output size calculated ok = 10485760 blocks');
+is_ok( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 4294967296000 ), 4294967296000, '4000 GiB sized output file tar output size calculated ok = 10485760 blocks');
 
 sub get_random_test_vault_name() {
 	my $random_vault = $test_vault_name;
