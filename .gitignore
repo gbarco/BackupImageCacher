@@ -15,6 +15,8 @@ MYMETA.yml
 nytprof.out
 pm_to_blib
 
+.aws_credentials.txt
+
 #project specific
 ./image_cache/*
 ./thumbs/*
