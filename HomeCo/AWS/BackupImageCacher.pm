@@ -1,17 +1,38 @@
 package HomeCo::AWS::BackupImageCacher;
 
+use 5.10.0;
 use strict;
+use warnings;
+
 use base qw{ Exporter };
 our @EXPORT = qw{ backup check_parameters };
+
+=head1 NAME
+
+HomeCo::AWS::BackupImageCacher - Backups images using Amazon Glacier on a daily or monthly bases.
+
+=head1 VERSION
+
+Version 0.1
+
+=cut
+
+our $VERSION = '0.1';
+
 use File::Find;
+use File::Spec;
+use File::Temp;
+use Net::Amazon::Glacier 0.13;
+
+my $tar_command = 'c:\Program Files (x86)\GnuWin32\bin\tar -cf - '; #command less paths (do not delete trailing space)
 
 # tar sizes from http://www.gnu.org/software/tar/manual/html_node/Standard.html#SEC184
 my $tar_record_size = 512; # standard metadata size and data block size for padding
 my $tar_blocking_factor = 20; # block to round up output file
-my $tar_block_size = $tar_block_size * $tar_round_blocks; # size in bytes of output file round up
+my $tar_block_size = $tar_blocking_factor * $tar_record_size; # size in bytes of output file round up
 
 sub backup () {
-	$config = $_;
+	my $config = $_;
 
 	# try to control parameters are checked. Can be circunvent, thou...
 	check_parameters( $config ) unless defined $config->{_checked};
@@ -29,7 +50,48 @@ sub backup () {
 }
 
 sub _backup_daily () {
-
+	my $config = $_;
+	
+	my $glacier = Net::Amazon::Glacier->new(
+		$config->{VaultRegion},
+		$config->{AWSAccessKey},
+		$config->{AWSSecret}
+	);
+	
+	#check Vault exists
+	die ( 'Vault does not seem to exist' ) unless eval {
+		$glacier->describe_vault( $config->{VaultName} );
+		1;
+	};
+	
+	# upload thumbs
+	
+	#estimate part size for estimated tarred directory size
+	my $part_size = $glacier->calculate_multipart_upload_partsize( _tar_size_directory( $config->{_thumbs_backup_path} ) );
+	
+	my $current_upload_id = $glacier->multipart_upload_init( $config->{VaultName}, $part_size, 'Daily Thumbs ' . $config->{_thumbs_backup_path} );
+	
+	my $part_index = 0;
+	my $parts_hash = [];
+	
+	while( !$fh->eof ) {
+		my $current_part_temp_path = _store_file_part( $part_size );
+		
+		$parts_hash->[$part_index] = $glacier->multipart_upload_upload_part( $config->{VaultName}, $current_upload_id, $part_size, $part_index, $current_part_temp_path );
+		
+		die( "Not a valid part hash" ) unless $parts_hash->[$part_index] =~ /^[0-9a-f]{64}$/;
+		
+		# compute last file size, most will be part_size, last might not
+		$file_size += -s $current_part_temp_path
+		
+		# dispose temp file
+		unlink $current_part_temp_path;
+	}
+	
+	# complete upload
+	my $archive_id = $glacier->multipart_upload_complete( $config->{VaultName}, $current_upload_id, parts_hash, $file_size );
+	
+	return $archive_id;
 }
 
 sub _backup_monthly () {
@@ -41,7 +103,7 @@ sub _tar_size_directory () {
 
 	my $dir = $_;
 
-	die( "Directory does not exist" unless -d $dir );
+	die( "Directory does not exist" ) unless -d $dir;
 
 	my $size_sum = 0; # adds metadata blocks and archive content size with proper rounding
 
@@ -49,9 +111,41 @@ sub _tar_size_directory () {
 
 	File::Find::find( { $size_sum += _tar_archive_member_size( -s $_) }, $dir );
 
-
-
 	return $size_sum;
+}
+
+# Split input from file handle into n part_size files
+sub _store_file_part() {
+	my ( $fh, $part_size ) = @_;
+	
+	my ($temp_fh, $temp_name) = File::Temp::mkstemp( );
+	
+	my $at = 0;
+	my $buf;
+	
+	# read parts as long a reading a part will not get us past a part_limit
+	# or until eof
+	while ( $at + $config->{ReadBufferSize} <= $part_size || $fh->eof ) {
+		read( $fh, $buf, $config->{ReadBufferSize} );
+		write( $temp_fh, $buf );
+		$at += $config->{ReadBufferSize};
+	}
+	
+	unless ( $fh->eof ) {
+		# calculate remaing bytes to read until part_size in case ReadBufferSize does
+		# not divide part_size evenly
+		my $last_buffer_size = $part_size - $at;
+	
+		if ( $last_buffer_size > 0 ) {
+			read( $fh, $buf, $config->{ReadBufferSize} );
+			write( $temp_fh, $buf );
+			$at += $config->{ReadBufferSize};
+		}
+		# at can only differ in last part, since this is not eof croack on non part_size at's
+		croack( "We did not get to a part_size while reading" ) unless ( $at == $part_size );
+	}
+
+	return $temp_name;
 }
 
 sub _tar_archive_member_size() {
@@ -65,7 +159,7 @@ sub _tar_archive_member_size() {
 	# corruption, and information about file types.
 
 	# archive member (512) + end-of-archive ( 2 * 512 ) + file contents rounded up to next 512 boundry.
-	return 3 * $tar_block_size + ceil( $file_size / $tar_block_size ) * $tar_block_size;
+	return 3 * $tar_block_size + ceil( $size / $tar_block_size ) * $tar_block_size;
 }
 
 sub _tar_output_file_size() {
@@ -94,17 +188,37 @@ sub check_parameters () {
 	die("VaultRegion does not exist. Set an AWS Region.") unless -d $config->{VaultRegion};
 	die("VaultName does not exist. Set an existing AWS Glacier Vault.") unless -d $config->{VaultRegion};
 	die("AWSCredentials file does not exist. Provide valid AWS Credetials-") unless -e $config->{AWSCredentials};
-
-	# check date is valid
-	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
-		my ($year, $month, $day) = unpack "A4 A2 A2", $config->{Date},;
-		timelocal(0,0,0,$day, $month-1, $year);
-		1;
-	}
-
+	
 	# either daily or monthly
 	die("Cannot request daily and monthly backup in a single run.") if ( $config->{Daily} && $config->{Monthly} );
 	die("Either daily or monthly must be specified.") if ( !$config->{Daily} && !$config->{Monthly} );
 
+	# check date is valid
+	my ($year, $month, $day);
+	
+	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
+		if ( $config->{Daily} ) {
+			($year, $month, $day) = unpack "A4 A2 A2", $config->{Date};
+			$config->{_thumbs_backup_path} = File::Spec::catpath( $config->{BaseThumbs}, "$year$month$day" );
+			$config->{_images_backup_path} = File::Spec::catpath( $config->{BaseImageCache}, "$year$month$day" );
+			
+		} elsif ( $config->{Monthly} ) {
+			($year, $month) = unpack "A4 A2", $config->{Date};
+			$day = 1; #ensure date exists to check just month and year
+			$config->{_thumbs_backup_path} = File::Spec::catpath( $config->{BaseThumbs}, "$year$month" );
+			$config->{_images_backup_path} = File::Spec::catpath( $config->{BaseImageCache}, "$year$month" );
+		}
+		#check dat exists in calendar
+		timelocal(0,0,0,$day, $month-1, $year);
+		
+		1;
+	};
+	
+	die("Thumbs directory does not exists at " . $config->{_thumbs_backup_path} ) unless -d $config->{_thumbs_backup_path};
+	die("Images directory does not exists at " . $config->{_images_backup_path} ) unless -d $config->{_images_backup_path};
+	
+	# check nobody deleted the trailing space in command
+	$tar_command += ' ' if ( substr($tar_command,-1,1) ne ' ' );
+	
 	$config->{_checked} = 1;
 }
