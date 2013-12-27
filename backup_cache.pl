@@ -19,14 +19,9 @@ $config->{Date} = DateTime->now->ymd;
 # read config file
 Config::Simple->import_from( $config_file, $config);
 
-# merge commandl line options with config file
+# merge command line options with config file, command line has precedense
 die("Error reading command line options.") unless GetOptions(
-	"vault=s" => $config->{VaultName},
-	"region=s" => $config->{VaultRegion},
-	"credentials=s" => $config->{AWSCredentials},
-	"daily" => $config->{Daily},
-	"monthly" => $config->{Monthly},
-	"date=s" => $config->{Date},
+	HomeCo::AWS::BackupImageCacher::parameter_match(),
 );
 
 # read credentials
@@ -35,14 +30,27 @@ die("Error reading command line options.") unless GetOptions(
 #request parameter check
 eval {
 	HomeCo::AWS::BackupImageCacher::check_parameters( $config );
+	HomeCo::AWS::BackupImageCacher::open_metadata_store( $config );
 };
 if ( $@ ) {
 	die( $@ );
 }
 
+if ( $config->{Daily} || $config->{Monthly} ) {
+	eval {
+		HomeCo::AWS::BackupImageCacher::backup( $config );
+	};
+	if ( $@ ) {
+		die( $@ );
+	}
+} elsif ( $config->{Cleanup} ) {
+	HomeCo::AWS::BackupImageCacher::cleanup( $config );
+} else {
+	die("Inconsistent parameters. Daily, Monty or Cleanup must be specified.");
+}
+
 eval {
-	HomeCo::AWS::BackupImageCacher::backup( $config );
-};
-if ( $@ ) {
+	HomeCo::AWS::BackupImageCacher::close_metadata_store( $config );
+} if ( $@ ) {
 	die( $@ );
 }
