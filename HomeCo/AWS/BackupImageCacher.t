@@ -1,67 +1,58 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests=>24;
+use Test::More tests=>30;
 use Carp;
 
 use lib '../..';
 
-my $test_vault_prefix = 'test_backupimage_cacher_x41925493445_';
+BEGIN {
+	# Be sure we can use all required modules for BackupImageCacher
+	use_ok( 'HomeCo::AWS::BackupImageCacher' );
+	use_ok( 'Net::Amazon::Glacier', 0.13 );
+	use_ok( 'Local::AWS::Credentials' );
+	use_ok( 'File::Temp' );
+	use_ok( 'File::Find' );
+	use_ok( 'File::Spec' );
+	use_ok( 'File::Temp' );
+	use_ok( 'DateTime' );
+	use_ok( 'Carp' );
+}
 
-#expected methods
-my @methods_backup = qw( backup_daily backup_monthly );
-my @methods_glacier = qw(
-create_vault delete_vault describe_vault list_vaults set_vault_notifications get_vault_notifications delete_vault_notifications
-upload_archive delete_archive
-initiate_archive_retrival initiate_invenrory_retrieval initiate_job describe_job get_job_output list_jobs
-calculate_multipart_upload_partsize
+# A wierd name for test vaults
+my $test_vault_name = 'test_backupimage_cacher_x41925493445';
+
+# Expected methods for BackupImageCacher and Glacier
+my @methods_backup = qw( backup check_parameters parameter_match open_matadata_store ping_metadata_store close_matadata_store cleanup );
+my @methods_glacier = qw( create_vault delete_vault describe_vault list_vaults set_vault_notifications get_vault_notifications
+delete_vault_notifications upload_archive delete_archive initiate_archive_retrival initiate_inventory_retrieval
+initiate_job describe_job get_job_output list_jobs calculate_multipart_upload_partsize
 );
 
-#test the module can be added
-use_ok( 'HomeCo::AWS::BackupImageCacher' );
-use HomeCo::AWS::BackupImageCacher;
-use_ok( 'Net::Amazon::Glacier', 0.13 );
-use Net::Amazon::Glacier 0.13;
-use_ok( 'Local::AWS::Credentials' );
-use Local::AWS::Credentials;
-use_ok( 'File::Temp' );
-use File::Temp;
-use_ok( 'Carp' );
-use Carp;
-
-#read credentials from file
+# Read credentials from file
 my $credential_file_path = '../../.aws_credentials.txt';
 my ( $aws_access_key, $aws_secret_key ) = Local::AWS::Credentials::read_aws_credentials( $credential_file_path  );
-
-#instance objects
-#my $backup_imager = new HomeCo::AWS::BackupImageCacher;
+# Instanciate objects
 my $glacier = Net::Amazon::Glacier->new(
 	'us-west-1',
 	$aws_access_key,
 	$aws_secret_key
 );
-#
-##check the object are blessed
-#isa_ok( $backup_imager, 'HomeCo::AWS::BackupImageCacher' );
+# Check Net::Amazon::Glacier objects are blessed correctly
 isa_ok( $glacier, 'Net::Amazon::Glacier' );
-#
-##check all expected methods exist
-#can_ok( $backup_imager, @methods_backup, 'HomeCo::AWS::BackupImageCacher expected methods exist' );
-#can_ok( $glacier, @methods_glacier, 'Net::AWS::Glacer expected methods exist' );
-
-#check credentials are coherent
+# Check expected methods exist
+print 'HomeCo::AWS::BackupImageCacher expected methods exist'
+	if can_ok( 'HomeCo::AWS::BackupImageCacher', @methods_backup );
+print 'Net::AWS::Glacer expected methods exist'
+	if can_ok( $glacier, @methods_glacier );
+# Check credentials are coherent
 ok ( length( $aws_access_key ) > 0, 'Minimally coherent AWS access key');
 ok ( length( $aws_secret_key ) > 0, 'Minimally coherent AWS secret');
-
-#check credentials against AWS with dummy request
+# Check credentials against AWS with dummy request
 my $vaults = $glacier->list_vaults();
 is ( ref $vaults, 'ARRAY', 'list_vaults(): Returns an array of vaults, keys are valid' );
-
-#test for exceptions
+# Test for expected Glacier exceptions
 &test_resource_not_found_exception;
-
-&reset_test_environment;
-
-#test calculating tar file size
+# Test calculating tar member sizes
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 0 ), 1536, 'zero length files tar member size calculated ok = 3 meta + 0 content');
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 1 ), 2048, 'single byte files tar member size calculated ok = 3 meta + 1 content');
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 511 ), 2048, 'block minus one byte files tar member size calculated ok = 3 meta + 1 content');
@@ -70,7 +61,7 @@ is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 513 ), 2560, 'sing
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 1024 ), 2560, 'two record files tar member size calculated ok = 3 meta + 2 content');
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 10240 ), 11776, 'blocking factor sized tar member size calculated ok = 3 meta + 10 content');
 is( HomeCo::AWS::BackupImageCacher::_tar_archive_member_size( 10737418240 ), 10737419776, '10 GiB tar member size calculated ok = 3 meta + 20971520 content');
-
+# Test calculating tar file sizes
 is( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 0 ), 10240, '0 sized output file tar output size calculated ok = 10 blocks');
 is( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 10240 ), 10240, '10 block sized output file tar output size calculated ok = 10 blocks');
 is( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 10241 ), 20480, '10 block + 1 byte sized output file tar output size calculated ok = 20 blocks');
@@ -81,7 +72,6 @@ is( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 4294967296000 ), 4294
 #
 # Helper methods
 #
-
 sub get_random_test_vault_name($) {
 	my $test_vault_prefix = $_;
 	my $random_vault = $test_vault_prefix;
@@ -90,7 +80,7 @@ sub get_random_test_vault_name($) {
 	return $random_vault;
 }
 
-#generate a directory with a set of files
+# Generates a directory with a set of files for testing
 sub generate_files {
 	my @file_sizes = @_;
 
@@ -143,19 +133,6 @@ sub cleanup_files ($$) {
 #
 # Complex tests as methods
 #
-
-sub reset_test_environment {
-	#check no test vaults exist or reset test environment
-	my $vault;
-	foreach $vault ( @$vaults ) {
-		#delete vaults beginning with test string
-		if ( $vault =~ qr/^$test_vault_prefix/ ) {
-			try {
-				$glacier->delete_vault( $vault );
-			} catch ( warn( "Could not reset test environment" ) );
-		}
-	}
-}
 
 sub test_resource_not_found_exception {
 	eval {
