@@ -8,24 +8,24 @@ use HomeCo::AWS::BackupImageCacher;
 
 # calculate config file name
 my $config = {}; #must be empty hash for Config::Simple
-my $config_file = $0; $config_file =~ s/\.([^\.]+)$/\.cfg/;
+my $config_file = $0; $config_file =~ s/\.([^\.]+)$/\.conf/;
 die("No config file $config_file!") unless -f $config_file;
 
 # default values
 $config->{Daily} = '';
 $config->{Monthly} = '';
-$config->{Date} = DateTime->now->ymd;
+$config->{Date} = DateTime->now->ymd('');
 
 # read config file
 Config::Simple->import_from( $config_file, $config);
 
 # merge command line options with config file, command line has precedense
 die("Error reading command line options.") unless GetOptions(
-	HomeCo::AWS::BackupImageCacher::parameter_match(),
+	HomeCo::AWS::BackupImageCacher::parameter_match( $config ),
 );
 
 # read credentials
-( $config->{AWSAccessKey}, $config->{AWSSecret} ) = AWS::Local::Credentials::read_aws_credentials( $config->{AWSCredentials} );
+( $config->{AWSAccessKey}, $config->{AWSSecret} ) = Local::AWS::Credentials::read_aws_credentials( $config->{AWSCredentials} );
 
 #request parameter check
 eval {
@@ -46,11 +46,12 @@ if ( $config->{Daily} || $config->{Monthly} ) {
 } elsif ( $config->{Cleanup} ) {
 	HomeCo::AWS::BackupImageCacher::cleanup( $config );
 } else {
-	die("Inconsistent parameters. Daily, Monty or Cleanup must be specified.");
+	die("Inconsistent parameters. Daily, Montlhy or Cleanup must be specified.");
 }
 
 eval {
 	HomeCo::AWS::BackupImageCacher::close_metadata_store( $config );
-} if ( $@ ) {
+};
+if ( $@ ) {
 	die( $@ );
 }
