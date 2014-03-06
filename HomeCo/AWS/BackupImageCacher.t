@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests=>77;
+use Test::More tests=>79;
 use Carp;
 
 use lib '../..';
@@ -82,10 +82,13 @@ $parameters->{Daily} = 1; $parameters->{Monthly} = 1;
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Cannot request daily and monthly backup in a single run./, "PARAM Checks requests do not overlap.");
 $parameters->{Daily} = 1; $parameters->{Monthly} = 0;
 $parameters->{Date} = '20140132'; # Invalid date, beyond month range
-exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks valid dates on simple ranges.");
-$parameters->{Date} = '20000229'; # Invalid date, non leap year
-exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks valid dates on complex leap years.");
+exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates on simple ranges.");
+$parameters->{Date} = '19000229'; # Invaliddate, non leap year, mod 100
+exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates on complex leap years.");
 $parameters->{Date} = '20141301'; # Invalid date, valid when month/day order is changed
+exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates with locales mismatches.");
+$parameters->{Date} = '20140305'; # Valid date
+exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Thumbs directory does not exists at/, "PARAM Checks valid dates that errored to avoid regression.");
 
 #
 # TAR tests
