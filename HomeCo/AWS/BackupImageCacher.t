@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests=>79;
+use Test::More tests=>80;
 use Carp;
 
 use lib '../..';
@@ -19,6 +19,7 @@ BEGIN {
 	use_ok( 'File::Temp' );
 	use_ok( 'DateTime' );
 	use_ok( 'Carp' );
+	use_ok( 'DBI' );
 }
 
 # A wierd name for test vaults
