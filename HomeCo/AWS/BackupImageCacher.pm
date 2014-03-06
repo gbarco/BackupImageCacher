@@ -5,7 +5,7 @@ use strict;
 use warnings;
 
 use base qw{ Exporter };
-our @EXPORT = qw{ backup check_parameters parameter_match open_matadata_store ping_metadata_store close_matadata_store cleanup };
+our @EXPORT = qw{ backup check_parameters parameter_match ping_metadata_store close_metadata_store open_metadata_store cleanup };
 
 =head1 NAME
 
@@ -80,19 +80,19 @@ sub check_parameters ( $ ) {
 	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
 		if ( $config->{Daily} ) {
 			($year, $month, $day) = unpack "A4 A2 A2", $config->{Date};
-			$config->{_thumbs_backup_path} = File::Spec::catpath( $config->{BaseThumbs}, "$year$month$day" );
-			$config->{_images_backup_path} = File::Spec::catpath( $config->{BaseImageCache}, "$year$month$day" );
+			$config->{_thumbs_backup_path} = File::Spec->catpath( $config->{BaseThumbs}, "$year$month$day" );
+			$config->{_images_backup_path} = File::Spec->catpath( $config->{BaseImageCache}, "$year$month$day" );
 			$config->{CommentTrail} = 'DAILY_' . "$year$month$day";
 
 		} elsif ( $config->{Monthly} ) {
 			($year, $month) = unpack "A4 A2", $config->{Date};
 			$day = 1; #ensure date exists to check just month and year
-			$config->{_thumbs_backup_path} = File::Spec::catpath( $config->{BaseThumbs}, "$year$month" );
-			$config->{_images_backup_path} = File::Spec::catpath( $config->{BaseImageCache}, "$year$month" );
+			$config->{_thumbs_backup_path} = File::Spec->catpath( $config->{BaseThumbs}, "$year$month" );
+			$config->{_images_backup_path} = File::Spec->catpath( $config->{BaseImageCache}, "$year$month" );
 			$config->{Comment} = 'MONTHLY_' . "$year$month";
 		}
 		#check dat exists in calendar
-		timelocal(0,0,0,$day, $month-1, $year);
+		DateTime->new( year => $year,  month => $month, day => $day );
 
 		1;
 	};
@@ -118,7 +118,7 @@ sub ping_metadata_store ( $ ) {
 	return $@;
 }
 
-sub open_matadata_store ( $ ) {
+sub open_metadata_store ( $ ) {
 	my $config = shift;
 
 	eval {
@@ -147,7 +147,7 @@ sub open_matadata_store ( $ ) {
 	}
 }
 
-sub close_matadata_store( $ ) {
+sub close_metadata_store( $ ) {
 	my $config = shift;
 
 	$config->{dbh}->disconnect;
@@ -248,7 +248,7 @@ sub _backup() {
 		my $part_index = 0;
 		my $parts_hash = [];
 
-		open(my $fh, '<', $tar_command . File::Spec::catpath( $config->{_thumbs_backup_path}, '*' ) . ' ' . File::Spec::catpath( $config->{_images_backup_path}, '*' ) );
+		open(my $fh, '<', $tar_command . File::Spec->catpath( $config->{_thumbs_backup_path}, '*' ) . ' ' . File::Spec->catpath( $config->{_images_backup_path}, '*' ) );
 
 		while( !$fh->eof ) {
 			my $current_part_temp_path = _store_file_part( $config, $fh, $part_size );
