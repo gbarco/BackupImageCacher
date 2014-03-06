@@ -25,6 +25,7 @@ use File::Spec;
 use File::Temp;
 use DateTime;
 use Carp;
+use DBI;
 
 my $tar_command = 'c:\Program Files (x86)\GnuWin32\bin\tar -cf - '; #command less paths (do not delete trailing space)
 
