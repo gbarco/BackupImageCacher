@@ -11,7 +11,7 @@ my $only_local = 1;
 BEGIN {
 	# Be sure we can use all required modules for BackupImageCacher
 	use_ok( 'HomeCo::AWS::BackupImageCacher' );
-	use_ok( 'Net::Amazon::Glacier', 0.13 );
+	use_ok( 'Net::Amazon::Glacier', 0.14 );
 	use_ok( 'Local::AWS::Credentials' );
 	use_ok( 'File::Temp' );
 	use_ok( 'File::Find' );
