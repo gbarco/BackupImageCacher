@@ -29,9 +29,9 @@ my $test_vault_name = 'test_backupimage_cacher_x41925493445';
 my @methods_backup = qw( backup check_parameters parameter_match open_metadata_store ping_metadata_store close_metadata_store cleanup );
 my @methods_glacier = qw( create_vault delete_vault describe_vault list_vaults set_vault_notifications get_vault_notifications
 delete_vault_notifications upload_archive delete_archive initiate_inventory_retrieval
-initiate_job describe_job get_job_output list_jobs
+initiate_job describe_job get_job_output list_jobs calculate_multipart_upload_partsize
 );
-# Check later initiate_archive_retrival calculate_multipart_upload_partsize
+#check later initiate_archive_retrival
 
 # Read credentials from file
 my $credential_file_path = '../../.aws_credentials.txt';
