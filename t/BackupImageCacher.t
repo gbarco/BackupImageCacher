@@ -16,10 +16,11 @@ BEGIN {
 	use_ok( 'File::Temp' );
 	use_ok( 'File::Find' );
 	use_ok( 'File::Spec' );
-	use_ok( 'File::Temp' );
 	use_ok( 'DateTime' );
 	use_ok( 'Carp' );
 	use_ok( 'DBI' );
+	use_ok( 'Archive::Tar::Streamed' );
+	use_ok( 'Tie::FileHandle::Split' );
 }
 
 # A wierd name for test vaults
@@ -155,12 +156,12 @@ is( HomeCo::AWS::BackupImageCacher::_tar_output_file_size( 4294967296000 ), 4294
 
 # Generates a directory with a set of files for testing
 sub generate_files {
-	my $file_sizes = shift;
+	my $file_sizes_or_content = shift;
 
 	my $temp_dir = File::Temp::tempdir();
 	my $temp_files = {};
 
-	foreach my $file_size ( @$file_sizes ) {
+	foreach my $file_size_or_content ( @$file_sizes_or_content ) {
 		#test simple upload of generated files
 		eval {
 			my ( $temp_fh, $temp_filename );
@@ -169,7 +170,14 @@ sub generate_files {
 
 			binmode $temp_fh;
 
-			my $data = get_random_file_content( $file_size );
+			# If we get numbers we generate random content for that.
+			# If we get content e use it for the file contents directly.
+			my $data;
+			if ( $file_size_or_content =~ /\d+/ ) {
+				$data = get_random_file_content( $file_size_or_content );
+			} else {
+				$data = $file_size_or_content;
+			}
 
 			$temp_fh->print( $data ) if ( defined $data );
 
@@ -237,9 +245,7 @@ sub test_resource_not_found_exception() {
 sub test_directory_with_files_of_size($$$) {
 	my ( $file_sizes, $expected_size, $ok_msg ) = @_;
 
-	my ( $temp_files, $temp_dir );
-
-	( $temp_files, $temp_dir ) = &generate_files( $file_sizes );
+	my ( $temp_files, $temp_dir ) = &generate_files( $file_sizes );
 	is( HomeCo::AWS::BackupImageCacher::_tar_directory_size( [ $temp_dir ] ), $expected_size, $ok_msg );
 	&cleanup_files( $temp_files, $temp_dir );
 }
