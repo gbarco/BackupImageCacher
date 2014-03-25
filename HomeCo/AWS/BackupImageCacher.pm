@@ -3,6 +3,7 @@ package HomeCo::AWS::BackupImageCacher;
 use 5.10.0;
 use strict;
 use warnings;
+use utf8;
 
 use base qw{ Exporter };
 our @EXPORT = qw{ backup check_parameters parameter_match ping_metadata_store close_metadata_store open_metadata_store cleanup };
