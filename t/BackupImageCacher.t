@@ -3,7 +3,7 @@ use strict;
 use Test::More tests=>80;
 use Carp;
 
-use lib '../..';
+use lib '..';
 
 # Perform only local tests, no connection to Glacier
 my $only_local = 1;
@@ -34,7 +34,7 @@ initiate_job describe_job get_job_output list_jobs calculate_multipart_upload_pa
 #check later initiate_archive_retrival
 
 # Read credentials from file
-my $credential_file_path = '../../.aws_credentials.txt';
+my $credential_file_path = '../.aws_credentials.txt';
 my ( $aws_access_key, $aws_secret_key ) = Local::AWS::Credentials::read_aws_credentials( $credential_file_path  );
 # Instanciate objects
 my $glacier = Net::Amazon::Glacier->new(
