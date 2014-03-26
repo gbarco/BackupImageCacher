@@ -1,9 +1,9 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests=>80;
+use Test::More tests=>81;
 use Carp;
 
-use lib '..';
+use lib qw [ .. ];
 
 # Perform only local tests, no connection to Glacier
 my $only_local = 1;
@@ -20,7 +20,7 @@ BEGIN {
 	use_ok( 'Carp' );
 	use_ok( 'DBI' );
 	use_ok( 'Archive::Tar::Streamed' );
-	use_ok( 'Tie::FileHandle::Split' );
+	use_ok( 'Tie::FileHandle::Split', 0.95 );
 }
 
 # A wierd name for test vaults
