@@ -80,11 +80,31 @@ sub check_parameters ( $ ) {
 	# check date is valid
 	my ($year, $month, $day);
 
-	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
+	#die("Provided date is invalid " . $config->{Date} . ".") unless eval {
 		if ( $config->{Daily} ) {
 			($year, $month, $day) = unpack "A4 A2 A2", $config->{Date};
-			$config->{_thumbs_backup_path} = File::Spec->catpath( $config->{BaseThumbs}, "$year$month$day" );
-			$config->{_images_backup_path} = File::Spec->catpath( $config->{BaseImageCache}, "$year$month$day" );
+			$config->{backup_files} = ();
+			#use re "debug";
+			my $dir = quotemeta File::Spec->catpath( '', $config->{BaseThumbs}, "$year$month$day") ;
+			File::Find::find( {
+				no_chdir => 1,
+				wanted => sub {
+					if ( defined $_ && !-d $_ && /^${dir}/ ) {
+							print $File::Find::name . "\n";
+							push @{$config->{backup_files}}, $File::Find::name;	
+						}
+					}
+			}, $config->{BaseThumbs} );
+			
+			print join( @{$config->{backup_files}} );
+			
+			#File::Find::find( sub {
+			#	my $dir = File::Spec->catpath( '', $config->{BaseImageCache}, "$year$month") ;
+			#	if ( $_ =~ qr/^${dir}/ && !-d $Find::File::name ) {
+			#		push @{$config->{backup_files}}, $File::Find::name;	
+			#	}
+			#}, $config->{BaseImageCache} );
+			
 			$config->{Comment} = 'DAILY_' . "$year$month$day";
 
 		} elsif ( $config->{Monthly} ) {
@@ -98,7 +118,7 @@ sub check_parameters ( $ ) {
 		DateTime->new( year => $year,  month => $month, day => $day );
 
 		1;
-	};
+	#};
 
 	die("Thumbs directory does not exists at " . $config->{_thumbs_backup_path} ) unless ( -d $config->{_thumbs_backup_path} );
 	die("Images directory does not exists at " . $config->{_images_backup_path} ) unless ( -d $config->{_images_backup_path} );
