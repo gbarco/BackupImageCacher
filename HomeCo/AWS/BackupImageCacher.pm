@@ -180,19 +180,18 @@ sub cleanup( $ ) {
 		$glacier->describe_vault( $config->{VaultName} );
 		1;
 	};
-
-	#check last monthly
-	my $monthly = $config->{dbh}->selectrow_hashref( $config->{SQLSelectLastMonthly} );
-
+	
+	my $sth = $config->{dbh}->prepare( $config->{SQLSelectMonthly} );
+	$sth->execute( $config->{MonthlyCode} );
+	
+	my $monthly = $sth->fetchrow_hashref();
+	
 	unless ( $monthly->{archive_id} ) {
-		if ( $monthly->{archive_id} =~ /^MONTHLY_(\d\d\d\d)(\d\d)$/ ) {
+		if ( $monthly->{monthly} =~ /^(\d\d\d\d)(\d\d)$/ ) {
 			my ( $year, $month) = ( $1, $2 );
 
-			# like statement match for DAILY_YYYYMM??
-			my $daily_description = 'DAILY_' . $year . $month . '%';
-
-			my $sth_old_dailies = $config->{dbh}->prepare( $config->{SQLSelectByDescription} );
-			$sth_old_dailies->execute( $daily_description );
+			my $sth_old_dailies = $config->{dbh}->prepare( $config->{SQLSelectDailies} );
+			$sth_old_dailies->execute( $monthly->{daily} );
 
 			while ( my $old_daily = $sth_old_dailies->fetchrow_hashref() ) {
 				$config->{ArchiveId} = $old_daily->{archive_id};
@@ -204,20 +203,18 @@ sub cleanup( $ ) {
 					} else {
 						#***log odd archives deleted
 					}
-
 				} else {
 					#****log not deleted
 				}
 			}
-
 			# get all possible
 		} else {
-			#bad description in last monthly
-			die("Wrong monthly description format");
+			#bad monthlycode in last monthly
+			die("Wrong monthly date code");
 		}
 	} else {
-		#***log no last monthly...
-		#no monthly, ever, no cleanup needed
+		#no monthly for this month...
+		#just log in case someone is really expecting it to be there
 	}
 }
 
