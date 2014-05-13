@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 use strict;
-use Test::More tests=>81;
+use Test::More tests=>82;
 use Carp;
 
 use lib qw [ .. ];
@@ -23,7 +23,7 @@ BEGIN {
 	use_ok( 'Tie::FileHandle::Split', 0.95 );
 }
 
-# A wierd name for test vaults
+# A wierd name for test vaults that should not exist!
 my $test_vault_name = 'test_backupimage_cacher_x41925493445';
 
 # Expected methods for BackupImageCacher and Glacier
@@ -32,10 +32,10 @@ my @methods_glacier = qw( create_vault delete_vault describe_vault list_vaults s
 delete_vault_notifications upload_archive delete_archive initiate_inventory_retrieval
 initiate_job describe_job get_job_output list_jobs calculate_multipart_upload_partsize
 );
-#check later initiate_archive_retrival
 
 # Read credentials from file
 my $credential_file_path = '../.aws_credentials.txt';
+ok ( -e $credential_file_path, 'Credential file required. Should be ../.aws_credentials.txt and have access_key (linefeed) secret_key' );
 my ( $aws_access_key, $aws_secret_key ) = Local::AWS::Credentials::read_aws_credentials( $credential_file_path  );
 # Instanciate objects
 my $glacier = Net::Amazon::Glacier->new(
@@ -89,9 +89,8 @@ $parameters->{Date} = '19000229'; # Invaliddate, non leap year, mod 100
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates on complex leap years.");
 $parameters->{Date} = '20141301'; # Invalid date, valid when month/day order is changed
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates with locales mismatches.");
-$parameters->{BaseThumbs} = 'a_direcotory_really_unlikelly_to_exist'; # Have this error after date is valid and confirmed
 $parameters->{Date} = '20140305'; # Valid date
-exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Thumbs directory does not exists at/, "PARAM Checks valid dates that errored to avoid regression.");
+ok ( \&HomeCo::AWS::BackupImageCacher::check_parameters( $parameters ), "PARAM Checks valid dates that errored to avoid regression.");
 
 #
 # TAR tests
