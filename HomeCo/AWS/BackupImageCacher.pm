@@ -93,23 +93,20 @@ sub check_parameters ( $ ) {
 		1;
 	};
 
-	die("Thumbs directory does not exists at " . $config->{BaseThumbs} ) unless ( -d $config->{BaseThumbs} );
-	die("Images directory does not exists at " . $config->{BaseImageCache} ) unless ( -d $config->{BaseImageCache} );
-
 	if ( $config->{Daily} ) {
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month$day" )};
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month$day" )};
-		
+
 		$config->{Comment} = 'DAILY_' . "$year$month$day";
-		
+
 		$config->{MonthlyCode} = "$year$month";
 		$config->{DailyCode} = "$year$month$day";
 	} elsif ( $config->{Monthly} ) {
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month" )};
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month" )};
-		
+
 		$config->{Comment} = 'MONTHLY_' . "$year$month";
-		
+
 		$config->{MonthlyCode} = "$year$month";
 		$config->{DailyCode} = undef;
 	}
@@ -180,12 +177,12 @@ sub cleanup( $ ) {
 		$glacier->describe_vault( $config->{VaultName} );
 		1;
 	};
-	
+
 	my $sth = $config->{dbh}->prepare( $config->{SQLSelectMonthly} );
 	$sth->execute( $config->{MonthlyCode} );
-	
+
 	my $monthly = $sth->fetchrow_hashref();
-	
+
 	unless ( $monthly->{archive_id} ) {
 		if ( $monthly->{monthly} =~ /^(\d\d\d\d)(\d\d)$/ ) {
 			my ( $year, $month) = ( $1, $2 );
