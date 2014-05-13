@@ -89,6 +89,7 @@ $parameters->{Date} = '19000229'; # Invaliddate, non leap year, mod 100
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates on complex leap years.");
 $parameters->{Date} = '20141301'; # Invalid date, valid when month/day order is changed
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Provided date is invalid/, "PARAM Checks invalid dates with locales mismatches.");
+$parameters->{BaseThumbs} = 'a_direcotory_really_unlikelly_to_exist'; # Have this error after date is valid and confirmed
 $parameters->{Date} = '20140305'; # Valid date
 exception_like( \&HomeCo::AWS::BackupImageCacher::check_parameters, $parameters, qr/Thumbs directory does not exists at/, "PARAM Checks valid dates that errored to avoid regression.");
 
