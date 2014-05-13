@@ -315,24 +315,6 @@ sub _backup() {
 	return $archive_id;
 }
 
-sub _cleanup() {
-	my $config = shift;
-
-	my $glacier = Net::Amazon::Glacier->new(
-		$config->{VaultRegion},
-		$config->{AWSAccessKey},
-		$config->{AWSSecret}
-	);
-
-	#check Vault exists
-	die ( 'Vault does not seem to exist' ) unless $config->{NoGlacierAPICalls} || eval {
-		$glacier->describe_vault( $config->{VaultName} );
-		1;
-	};
-	
-	
-}
-
 # Split input from file handle into n part_size files
 sub _store_file_part() {
 	my ( $config, $fh, $part_size ) = @_;
