@@ -99,13 +99,19 @@ sub check_parameters ( $ ) {
 	if ( $config->{Daily} ) {
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month$day" )};
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month$day" )};
-
+		
 		$config->{Comment} = 'DAILY_' . "$year$month$day";
+		
+		$config->{MonthlyCode} = "$year$month";
+		$config->{DailyCode} = "$year$month$day";
 	} elsif ( $config->{Monthly} ) {
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month" )};
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month" )};
-
+		
 		$config->{Comment} = 'MONTHLY_' . "$year$month";
+		
+		$config->{MonthlyCode} = "$year$month";
+		$config->{DailyCode} = undef;
 	}
 
 	print join( '' , @{$config->{backup_files}} );
@@ -299,8 +305,10 @@ sub _backup() {
 			$sth->execute(
 				$archive_id,
 				$config->{Date},
-				Cwd::abs_path( $config->{_thumbs_backup_path} ) . ' & ' . Cwd::abs_path( $config->{_images_backup_path} ),
-				DateTime->now->ymd('') ) unless $config->{NoGlacierAPICalls};
+				$config->{Comment},
+				$config->{DailyCode},
+				$config->{MonthlyCode}
+			) unless $config->{NoGlacierAPICalls};
 		} else {
 			# ***log
 			die("Bad archive_id generated.") unless $config->{NoGlacierAPICalls} || defined $archive_id;
@@ -308,6 +316,24 @@ sub _backup() {
 	}
 
 	return $archive_id;
+}
+
+sub _cleanup() {
+	my $config = shift;
+
+	my $glacier = Net::Amazon::Glacier->new(
+		$config->{VaultRegion},
+		$config->{AWSAccessKey},
+		$config->{AWSSecret}
+	);
+
+	#check Vault exists
+	die ( 'Vault does not seem to exist' ) unless $config->{NoGlacierAPICalls} || eval {
+		$glacier->describe_vault( $config->{VaultName} );
+		1;
+	};
+	
+	
 }
 
 # Split input from file handle into n part_size files
