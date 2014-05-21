@@ -19,7 +19,7 @@ BEGIN {
 	use_ok( 'DateTime' );
 	use_ok( 'Carp' );
 	use_ok( 'DBI' );
-	use_ok( 'Archive::Tar::Streamed' );
+	use_ok( 'Archive::Tar::Streamed' ); 
 	use_ok( 'Tie::FileHandle::Split', 0.95 );
 }
 
