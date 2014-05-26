@@ -4,8 +4,6 @@ use 5.10.0;
 use strict;
 use warnings;
 use utf8;
-#use Log_Web;
-#use HomeCoSendmail;
 
 use base qw{ Exporter };
 our @EXPORT = qw{ backup check_parameters parameter_match ping_metadata_store close_metadata_store open_metadata_store cleanup };
@@ -33,7 +31,7 @@ use Archive::Tar::Streamed;
 use Tie::FileHandle::Split;
 use Cwd;
 
-# tar sizes from http://www.gnu.org/software/tar/manual/html_node/Standard.html#SEC184
+# Tar sizes from http://www.gnu.org/software/tar/manual/html_node/Standard.html#SEC184
 my $tar_record_size = 512; # standard metadata size and data block size for padding
 my $tar_blocking_factor = 20; # block to round up output file
 my $tar_block_size = $tar_blocking_factor * $tar_record_size; # size in bytes of output file round up
@@ -43,7 +41,7 @@ sub backup ( $ ) {
 
 	eval {
 		_log( 'INFO', "Will check parameters.");
-		# try to control parameters are checked. Can be circunvent, thou...
+		# Try to control parameters are checked. Can be circunvent, thou...
 		check_parameters( $config ) unless defined $config->{_checked};
 		
 		my $archive_id;
@@ -83,11 +81,11 @@ sub check_parameters ( $ ) {
 	die("VaultName not specified. Set an existing AWS Glacier Vault.") unless defined $config->{VaultName} && $config->{VaultName} ne '';
 	die("AWSCredentials file does not exist. Provide valid AWS Credetials-") unless -e $config->{AWSCredentials};
 
-	# either daily or monthly
+	# Either daily or monthly
 	die("Either daily, monthly or cleanup must be specified.") if ( !( $config->{Daily} || $config->{Monthly} || $config->{Cleanup} ) );
 	die("Cannot request daily and monthly backup in a single run.") if ( $config->{Daily} && $config->{Monthly} );
 
-	# check date is valid
+	# Check date is valid
 	my ($year, $month, $day);
 
 	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
