@@ -4,6 +4,8 @@ use 5.10.0;
 use strict;
 use warnings;
 use utf8;
+#use Log_Web;
+#use HomeCoSendmail;
 
 use base qw{ Exporter };
 our @EXPORT = qw{ backup check_parameters parameter_match ping_metadata_store close_metadata_store open_metadata_store cleanup };
@@ -40,12 +42,20 @@ sub backup ( $ ) {
 	my $config = shift;
 
 	eval {
+		_log( 'INFO', "Will check parameters.");
 		# try to control parameters are checked. Can be circunvent, thou...
 		check_parameters( $config ) unless defined $config->{_checked};
-		HomeCo::AWS::BackupImageCacher::_backup( $config );
+		
+		my $archive_id;
+		while ( !defined $archive_id ) {
+			$archive_id = HomeCo::AWS::BackupImageCacher::_backup( $config );
+			if ( !defined $archive_id ) {
+				_log( 'ERROR', "Error trying to backup. Will retry forever and email every $config->{RetryBeforeError}.");
+			}
+		}
 	};
 	if ( $@ ) {
-		die( $@ );
+		_logdie( 'ERROR', "Backup failed with error: $@" );
 	}
 }
 
@@ -81,7 +91,7 @@ sub check_parameters ( $ ) {
 	my ($year, $month, $day);
 
 	die("Provided date is invalid " . $config->{Date} . ".") unless eval {
-		if ( $config->{Daily} ) {
+		if ( $config->{Daily} || $config->{Cleanup} ) {
 			($year, $month, $day) = unpack "A4 A2 A2", $config->{Date};
 		} elsif ( $config->{Monthly} ) {
 			$day = 1; #ensure date exists to check just month and year
@@ -92,26 +102,32 @@ sub check_parameters ( $ ) {
 
 		1;
 	};
-
-	if ( $config->{Daily} ) {
+	
+	if ( $config->{Daily} || $config->{Monthly} || $config->{Cleanup} ) {
+		$config->{MonthlyCode} = "$year$month";
+	}
+	
+	if ( $config->{Daily} || $config->{Monthly} ) {
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month$day" )};
 		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month$day" )};
-
-		$config->{Comment} = 'DAILY_' . "$year$month$day";
-
-		$config->{MonthlyCode} = "$year$month";
-		$config->{DailyCode} = "$year$month$day";
-	} elsif ( $config->{Monthly} ) {
-		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseThumbs}, "$year$month" )};
-		push @{$config->{backup_files}}, @{_get_local_file_list( $config->{BaseImageCache}, "$year$month" )};
-
-		$config->{Comment} = 'MONTHLY_' . "$year$month";
-
-		$config->{MonthlyCode} = "$year$month";
-		$config->{DailyCode} = undef;
 	}
+	
+	if ( $config->{Daily} ) {
+		$config->{Comment} = 'DAILY_' . "$year$month$day";
+		$config->{DailyCode} = "$year$month$day";
+		
+		# Log files to store
+		_log( 'INFO', 'Will try to store daily $config->{DailyCode} with these files: ' . join( ', ' , @{$config->{backup_files}} ) );
+	} elsif( $config->{Monthly} ) {
+		$config->{Comment} = 'MONTHLY_' . "$year$month";
+		$config->{DailyCode} = undef;
 
-	print join( '' , @{$config->{backup_files}} );
+		# Log files to store
+		_log( 'INFO', 'Will try to store monthly $config->{MonthlyCode} with these files: ' . join( ', ' , @{$config->{backup_files}} ) );
+	} elsif( $config->{Cleanup} ) {
+		# Log action
+		_log( 'INFO', 'Will try cleanup on monthly $config->{MonthlyCode}' );
+	}
 
 	$config->{_checked} = 1;
 
@@ -129,42 +145,49 @@ sub ping_metadata_store ( $ ) {
 }
 
 sub open_metadata_store ( $ ) {
-	my $config = shift;
+	my ( $config ) = @_;
+	
+	_log( 'INFO', 'Opening metadata store.' );
 
 	eval {
+		_log( 'INFO', 'Connecting to metadata store.' );
+		my $dbh = DBI->connect( $config->{DatabaseConnect}, $config->{DatabaseUsername}, $config->{DatabasePassword}, { RaiseError => 1 } );
+
+		$config->{dbh} = $dbh;
+		
 		eval {
-			my $dbh = DBI->connect( $config->{DatabaseConnect}, $config->{DatabaseUsername}, $config->{DatabasePassword}, { RaiseError => 1 } );
-
-			$config->{dbh} = $dbh;
-
-			#try to select metadata store
+			# Try to select metadata store
+			_log( 'INFO', 'Checking we can read from metadata store.' );
 			$config->{dbh}->do( $config->{SQLSelectTable} );
 		};
 		if ( $@ ) {
-			#on error try to create
+			# On error try to create
+			_log( 'INFO', 'Failed opening metadata store. Will try to create table.' );
 			eval {
 				$config->{dbh}->do( $config->{SQLCreateTable} );
 			};
 			if ( $@ ) {
-				#die if metadata is innaccessible and we cannot create store
-				die( $@ );
+				# Die if metadata is innaccessible and we cannot create store
+				_logdie( 'ERROR', 'Could not open or create metadata store.' );
 			}
 		}
 	};
 	if ( $@ ) {
-		#could not connect
-		die( $@ );
+		# Could not connect
+		_logdie( 'ERROR', 'Could not connect to metadata store.' );
 	}
 }
 
 sub close_metadata_store( $ ) {
-	my $config = shift;
+	my ( $config ) = @_;
+	
+	_log( 'INFO', 'Closing metadata store.');
 
 	$config->{dbh}->disconnect;
 }
 
 sub cleanup( $ ) {
-	my $config = shift;
+	my ( $config ) = @_;
 
 	my $glacier = Net::Amazon::Glacier->new(
 		$config->{VaultRegion},
@@ -172,51 +195,64 @@ sub cleanup( $ ) {
 		$config->{AWSSecret}
 	);
 
-	#check Vault exists
-	die ( 'Vault does not seem to exist' ) unless eval {
-		$glacier->describe_vault( $config->{VaultName} );
-		1;
-	};
+	# Checks vault exists, logs and dies if not as per specs.
+	_check_vault( $glacier, $config );
+	
+	_log( 'INFO', 'Checking monthly exist before cleanup for monthly $config->{MonthlyCode}.');
 
 	my $sth = $config->{dbh}->prepare( $config->{SQLSelectMonthly} );
+	_log( 'INFO', "About to execute $config->{SQLSelectMonthly} with params $config->{MonthlyCode}");
 	$sth->execute( $config->{MonthlyCode} );
 
 	my $monthly = $sth->fetchrow_hashref();
 
-	unless ( $monthly->{archive_id} ) {
-		if ( $monthly->{monthly} =~ /^(\d\d\d\d)(\d\d)$/ ) {
-			my ( $year, $month) = ( $1, $2 );
-
-			my $sth_old_dailies = $config->{dbh}->prepare( $config->{SQLSelectDailies} );
-			$sth_old_dailies->execute( $monthly->{daily} );
-
-			while ( my $old_daily = $sth_old_dailies->fetchrow_hashref() ) {
-				$config->{ArchiveId} = $old_daily->{archive_id};
-				if ( _delete( $config ) ) {
-					#****log deleted
-					my $rows_deleted = $config->{dbh}->do( $config->{SQLDeleteSingleArchive}, undef, $old_daily->{archive_id} );
-					if ( $rows_deleted == 1 ) {
-						#***log deleted archive
-					} else {
-						#***log odd archives deleted
-					}
-				} else {
-					#****log not deleted
-				}
-			}
-			# get all possible
+	if ( $monthly->{archive_id} ) {
+		_log( 'INFO', 'Monthly ok. Stored in Glacier as $monthly->{archive_id}.');
+		my $sth_old_dailies = $config->{dbh}->prepare( $config->{SQLSelectDailies} );
+		_log( 'INFO', "About to execute $config->{SQLSelectDailies} with params $config->{MonthlyCode}");
+		my $will_delete_dailies = $sth_old_dailies->execute( $config->{MonthlyCode} );
+		
+		if ( $will_delete_dailies eq '0E0' ) {
+			_log( 'WARN', "No dailies for month $config->{MonthlyCode}. Already clean?" );
 		} else {
-			#bad monthlycode in last monthly
-			die("Wrong monthly date code");
+			_log( 'INFO', "I will delete $will_delete_dailies dailies for month $config->{MonthlyCode}" );
+		}
+		
+		while ( my $old_daily = $sth_old_dailies->fetchrow_hashref() ) {
+			_log( 'INFO', "Will cleanup daily $old_daily->{daily} with associated archive $old_daily->{archive_id}.");
+			$config->{ArchiveId} = $old_daily->{archive_id};
+			
+			my $deleted = 0;
+			eval {
+				_delete( $config );
+				$deleted = 1;
+			};
+			if ( $@ ) {
+				_log( 'WARN', 'Could not delete daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier with error $@.' );
+			}
+			
+			if ( $deleted ) {
+				_log( 'INFO', 'SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier!' );
+			} else {
+				_log( 'WARN', 'Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier.' );
+			}			
+		
+			my $rows_deleted = $config->{dbh}->do( $config->{SQLDeleteSingleArchive}, undef, $old_daily->{archive_id} );
+			if ( $rows_deleted == 1 ) {
+				_log( 'INFO', 'SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata!' );
+			} else {
+				_log( 'WARN', 'Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata.' );
+			}
 		}
 	} else {
-		#no monthly for this month...
-		#just log in case someone is really expecting it to be there
+		_log( 'WARN', 'No monthly for given month. Already clean?' );
 	}
 }
 
-sub _delete() {
-	my $config = shift;
+sub _delete($) {
+	my ( $config ) = @_;
+	
+	_log( 'INFO', "Calling Glacier delete_archive for $config->{Vault}, $config->{ArchiveId}");
 
 	my $glacier = Net::Amazon::Glacier->new(
 		$config->{VaultRegion},
@@ -227,89 +263,157 @@ sub _delete() {
 	return $glacier->delete_archive( $config->{Vault}, $config->{ArchiveId} );
 }
 
-sub _backup() {
-	my $config = shift;
-
+sub _backup($) {
+	my ( $config ) = @_;
+	
 	my $glacier = Net::Amazon::Glacier->new(
 		$config->{VaultRegion},
 		$config->{AWSAccessKey},
 		$config->{AWSSecret}
 	);
-
-	#check Vault exists
-	die ( 'Vault does not seem to exist' ) unless $config->{NoGlacierAPICalls} || eval {
-		$glacier->describe_vault( $config->{VaultName} );
-		1;
-	};
+	
+	# Checks vault exists, logs and dies if not as per specs.
+	_check_vault( $glacier, $config );
+	
+	_check_archive_exists( $glacier, $config );
 
 	my $retry = 0;
 	my $archive_id = undef;
 
 	while ( $retry++ <= $config->{RetryBeforeError} && !defined $archive_id ) {
+		_log( 'INFO', "This is try $retry on this set.");
+		
 		my $file_size = 0;
-		#estimate part size for estimated tarred directory size
-		my $tarred_size = _tar_directory_size( [ $config->{_thumbs_backup_path}, $config->{_images_backup_path} ] );
+		# Estimate part size for estimated tarred directory size
+		my $tarred_size = _tar_directory_size( $config->{backup_files} );
+		_log( 'INFO', "Estimated tar size to $tarred_size.");
 		my $part_size = $glacier->calculate_multipart_upload_partsize( $tarred_size );
-
-		my $current_upload_id = $glacier->multipart_upload_init( $config->{VaultName}, $part_size, $config->{Comment} ) unless $config->{NoGlacierAPICalls};
-
-		my $part_index = 0;
-		my $parts_hash = [];
-
-		# Cleanup only when not debugging
-		my $dir = File::Temp::tempdir( CLEANUP => ( $config->{Debug}?0:1 ) );
-
-		tie *TAR, 'Tie::FileHandle::Split', $dir, $part_size;
-
-		# Gets called when a part is generated by the streaming tar
-		(tied *TAR)->add_file_creation_listeners( sub {
-			my ( $tied_filehandle, $current_part_temp_path  ) = @_;
-
-			# compute last file size, most will be part_size, last might not
-			$file_size += -s $current_part_temp_path;
-
-			eval {
-				$parts_hash->[$part_index] = $glacier->multipart_upload_upload_part( $config->{VaultName}, $current_upload_id, $part_size, $part_index, $current_part_temp_path ) unless $config->{NoGlacierAPICalls};
-			};
-			croak( $@ ) if ( $@ );
-			#***log, do not die
-			die( "Not a valid part hash" ) unless $config->{NoGlacierAPICalls} || $parts_hash->[$part_index] =~ /^[0-9a-f]{64}$/;
-
-			#go to next part index next time
-			$part_index++;
-
-			# dispose temp file when not debugging
-			unlink $current_part_temp_path unless $config->{Debug};
-		});
-
-		# This calls the listener for each part
-		_tar_directory_contents( \*TAR, [ $config->{_thumbs_backup_path}, $config->{_images_backup_path} ] );
-
-		# This could call the listener for the last part
-		(tied *TAR)->write_buffers();
-
-		#$archive_id undef unless completed
+		_log( 'INFO', "Estimated Glacier part_size to $part_size.");
+		
+		my $current_upload_id;
 		eval {
-			$archive_id = $glacier->multipart_upload_complete( $config->{VaultName}, $current_upload_id, $parts_hash, $file_size ) unless $config->{NoGlacierAPICalls};
+			$current_upload_id = $glacier->multipart_upload_init( $config->{VaultName}, $part_size, $config->{Comment} ) unless $config->{NoGlacierAPICalls};
 		};
-
-		if ( defined $archive_id ) {
-			#***log archive_id and execute data
-			my $sth = $config->{dbh}->prepare( $config->{SQLInsertSingleArchive} );
-			$sth->execute(
-				$archive_id,
-				$config->{Date},
-				$config->{Comment},
-				$config->{DailyCode},
-				$config->{MonthlyCode}
-			) unless $config->{NoGlacierAPICalls};
+		if ( $@ ) {
+			_log( 'ERROR', "Could not initialize multipart_upload. This is retry $retry of $config->{RetryBeforeError}. Glacier returned error: $@.");
 		} else {
-			# ***log
-			die("Bad archive_id generated.") unless $config->{NoGlacierAPICalls} || defined $archive_id;
+			_log( 'INFO', "SUCCESS, UploadId $current_upload_id returned from Glacier, multipart started.");
 		}
+		
+		if ( $current_upload_id ) {
+
+			my $part_index = 0;
+			my $parts_hash = [];
+	
+			# Cleanup only when not debugging
+			my $dir = File::Temp::tempdir( CLEANUP => ( $config->{Debug}?0:1 ) );
+	
+			tie *TAR, 'Tie::FileHandle::Split', $dir, $part_size;
+	
+			_log( 'INFO', 'Setting up tar splitting.');
+			# Gets called when a part is generated by the streaming tar
+			(tied *TAR)->add_file_creation_listeners( sub {
+				my ( $tied_filehandle, $current_part_temp_path  ) = @_;
+	
+				# Compute last file size, most will be part_size, last might not
+				$file_size += -s $current_part_temp_path;
+				
+				_log( 'INFO', "A part of the archive has been stored and will be uploaded. Vault: $config->{VaultName}, UploadId: $current_upload_id PartSize: $part_size, PartIndex: $part_index, TempPath: $current_part_temp_path");
+				
+				my $retry_part = 0;
+				
+				while ( $retry_part++ <= $config->{RetryBeforeError} && $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
+					_log( 'INFO', "This is my try $retry_part on part $part_index.");
+					
+					eval {
+						$parts_hash->[$part_index] = $glacier->multipart_upload_upload_part( $config->{VaultName}, $current_upload_id, $part_size, $part_index, $current_part_temp_path ) unless $config->{NoGlacierAPICalls};
+					};
+					if ( $@ ) {
+						_log( 'WARN', "Uploading part to Glacier failed with error $@. Vault: $config->{VaultName}, UploadId: $current_upload_id PartSize: $part_size, PartIndex: $part_index, TempPath: $current_part_temp_path");
+					} else {
+						_log( 'INFO', "SUCCESS, uploading part to Glacier completed. Vault: $config->{VaultName}, UploadId: $current_upload_id PartSize: $part_size, PartIndex: $part_index, TempPath: $current_part_temp_path, PartHash: $parts_hash->[$part_index]");
+					}
+					
+					unless( $config->{NoGlacierAPICalls} || $parts_hash->[$part_index] =~ /^[0-9a-f]{64}$/ ) {
+						_log( 'ERROR', 'Not a valid part hash returned from Glacier: $parts_hash->[$part_index].');
+					} else {
+						# Go to next part index next time
+						$part_index++;
+		
+						# Dispose temp file when not debugging
+						unlink $current_part_temp_path unless $config->{Debug};
+					}
+				}
+				
+				if ( $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
+					# Also $retry_part++ > $config->{RetryBeforeError}
+					if ( $config->{Daily} ) {
+						_logemail( 'WARN', "Retrying a part more than $config->{RetryBeforeError} times for a single part on daily $config->{DailyCode}." );
+					} elsif( $config->{Monthly} ) {
+						_logemail( 'WARN', "Retrying a part more than $config->{RetryBeforeError} times for a single part on monthly $config->{MonthlyCode}." );
+					}
+				}
+			});
+	
+			_log( 'INFO', "Will begin tarring files.");
+			# This calls the listener for each part
+			_tar_directory_contents( \*TAR, $config->{backup_files} );
+	
+			# This could call the listener for the last part
+			(tied *TAR)->write_buffers();
+	
+			_log( 'INFO', "Will try to complete upload to Glacier.");
+			#$archive_id undef unless completed
+			eval {
+				$archive_id = $glacier->multipart_upload_complete( $config->{VaultName}, $current_upload_id, $parts_hash, $file_size ) unless $config->{NoGlacierAPICalls};
+			};
+			if ( defined $archive_id ) {
+				_log( 'INFO', "Glacier accepted archive $archive_id will try to store in metadata.");
+				eval {
+					my $sth = $config->{dbh}->prepare( $config->{SQLInsertSingleArchive} );
+					$sth->execute(
+						$archive_id,
+						$config->{Comment},
+						DateTime->now->ymd . ' ' . DateTime->now->hms,
+						$config->{DailyCode},
+						$config->{MonthlyCode},
+					) unless $config->{NoGlacierAPICalls};
+					_log( 'INFO', "SUCCESS, stored to Glacier and metadata with archive_id: $archive_id");
+				};
+				if ( $@ ) {
+					_log( 'ERROR', "Could not store metadata for $archive_id with error: $@.");
+				}
+			} else {
+				_log( 'ERROR', "Bad archive_id generated. Glacier returned error: $@.") unless $config->{NoGlacierAPICalls} || defined $archive_id;
+			}
+		} # Skips unless UploadId created successfully.
+	} # Retryies until $config->{RetryBeforeError} or an archive_id is generated
+	
+	if ( $archive_id ) {
+		_logemail( 'INFO', "SUCCESS, uploaded archive with archive_id $archive_id.");
+	} else {
+		#also $retry > $config->{RetryBeforeError} {
+		_logemail( 'ERROR', "Failed to upload archive after $config->{RetryBeforeError}.");
 	}
 
 	return $archive_id;
+}
+
+sub _check_vault($$) {
+	my ( $glacier, $config ) = @_;
+	
+	# Check Vault exists
+	_logdie( 'ERROR', "Describe_vault failed for $config->{VaultName}. Check AWS Credentials, vault config and credentials permissions.")
+		unless $config->{NoGlacierAPICalls} || eval {
+			$glacier->describe_vault( $config->{VaultName} );
+			1;
+	};
+}
+
+sub _check_archive_exists($$) {
+	my ( $config ) = @_;
+	
+	die( "Implement this!");
 }
 
 # Split input from file handle into n part_size files
@@ -323,7 +427,7 @@ sub _store_file_part() {
 	my $at = 0;
 	my $buf;
 
-	# read parts as long a reading a part will not get us past a part_limit
+	# Read parts as long a reading a part will not get us past a part_limit
 	# or until eof
 	while ( $at + $config->{ReadBufferSize} <= $part_size && !$fh->eof ) {
 		read( $fh, $buf, $config->{ReadBufferSize} );
@@ -332,7 +436,7 @@ sub _store_file_part() {
 	}
 
 	unless ( $fh->eof ) {
-		# calculate remaing bytes to read until part_size in case ReadBufferSize does
+		# Calculate remaing bytes to read until part_size in case ReadBufferSize does
 		# not divide part_size evenly
 		my $last_buffer_size = $part_size - $at;
 
@@ -349,7 +453,7 @@ sub _store_file_part() {
 }
 
 sub _tar_archive_member_size($) {
-	# separate and testable
+	# Separate and testable
 	my $size = shift;
 
 	# Physically, an archive consists of a series of file entries terminated by an end-of-archive entry,
@@ -380,39 +484,26 @@ sub _tar_output_file_size($) {
 
 sub _tar_directory_size ($) {
 	# File path are somehow limited. If path are to long additional info blocks might be generated by tar, since we are streaming we could get into trouble with maximum file pieces
-
 	my ( $dirs ) = @_;
 
 	my $size_sum = 0; # adds metadata blocks and archive content size with proper rounding
 
 	# -s returns 0 for directories, which is consistent
-
-	while ( my $dir = shift @$dirs) {
-		die( "Directory does not exist" ) unless -d $dir;
-		File::Find::find( sub { $size_sum += _tar_archive_member_size( -s $_) unless (-d $_); }, $dir );
+	while ( my $file = shift @$dirs) {
+		$size_sum += _tar_archive_member_size( -s $file) unless (-d $file);
 	}
-
-	return _tar_output_file_size( $size_sum );
+	
+	return _tar_output_file_size( _$size_sum );
 }
 
+# TODO bad method name
 sub _tar_directory_contents ($$) {
 	my ( $fh, $dirs ) = @_;
 
   my $tar = Archive::Tar::Streamed->new( $fh );
+	my $file;
 
-	while ( my $dir = shift @$dirs) {
-		die( "Directory does not exist" ) unless -d $dir;
-		File::Find::find( {
-			no_chdir => 1,
-			wanted => sub {
-				# Do not add . and ..
-				# ***log added file
-				unless ( -d $File::Find::name ) {
-					$tar->add( $File::Find::name );
-				}
-			}
-		}, $dir );
-	}
+	$tar->add( $file ) while ( $file = shift @$dirs);
 }
 
 sub _get_local_file_list($$) {
@@ -420,7 +511,8 @@ sub _get_local_file_list($$) {
 	my ( @filelist );
 
 	my $path = quotemeta File::Spec->catpath( '', $dir, $date_path );
-	print "Dir is: $path\n";
+	
+	_log( 'INFO', "Adding files from $path to backup set." );
 	File::Find::find( {
 		no_chdir => 1,
 		wanted => sub {
@@ -429,6 +521,29 @@ sub _get_local_file_list($$) {
 			}
 	}, $dir );
 	return \@filelist;
+}
+
+sub _log($$) {
+	my ( $level, $message ) = @_;
+	
+	print "$level, $message\n";
+}
+
+sub _logemail($$) {
+	my ( $level, $message ) = @_;
+	_log( $level, $message );
+}
+
+sub _logfinishandemail($$) {
+	my ( $level, $message ) = @_;
+	
+	print "THIS WILL BE A MAIL: $level, $message\n";
+}
+
+sub _logdie($$) {
+	my ( $level, $message ) = @_;
+	_log( $level, $message );
+	die( $message );
 }
 
 1;
