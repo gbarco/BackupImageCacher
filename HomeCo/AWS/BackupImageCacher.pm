@@ -216,6 +216,8 @@ sub cleanup( $ ) {
 			_log( 'INFO', "I will delete $will_delete_dailies dailies for month $config->{MonthlyCode}" );
 		}
 		
+		my ( $cleaned_dailies ) = 0;
+		
 		while ( my $old_daily = $sth_old_dailies->fetchrow_hashref() ) {
 			_log( 'INFO', "Will cleanup daily $old_daily->{daily} with associated archive $old_daily->{archive_id}.");
 			$config->{ArchiveId} = $old_daily->{archive_id};
@@ -226,21 +228,27 @@ sub cleanup( $ ) {
 				$deleted = 1;
 			};
 			if ( $@ ) {
-				_log( 'WARN', 'Could not delete daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier with error $@.' );
+				_log( 'WARN', "Could not delete daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier with error $@." );
 			}
 			
 			if ( $deleted ) {
-				_log( 'INFO', 'SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier!' );
+				_log( 'INFO', "SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier!" );
+				$cleaned_dailies++;
 			} else {
-				_log( 'WARN', 'Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier.' );
+				_log( 'WARN', "Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from Glacier." );
 			}			
 		
 			my $rows_deleted = $config->{dbh}->do( $config->{SQLDeleteSingleArchive}, undef, $old_daily->{archive_id} );
 			if ( $rows_deleted == 1 ) {
-				_log( 'INFO', 'SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata!' );
+				_log( 'INFO', "SUCCESS, deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata!" );
 			} else {
-				_log( 'WARN', 'Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata.' );
+				_log( 'WARN', "Could not deleted daily $old_daily->{daily} with associated archive $old_daily->{archive_id} from metadata." );
 			}
+		}
+		if ( $cleaned_dailies == $will_delete_dailies ) {
+			_logemail( 'INFO', "SUCCESS, deleted the expected number of dailies for $config->{MonthlyCode}." );
+		} else {
+			_logemail( 'WARN', "Number of dailies mismatch in cleanup for $config->{MonthlyCode}." );
 		}
 	} else {
 		_log( 'WARN', 'No monthly for given month. Already clean?' );
