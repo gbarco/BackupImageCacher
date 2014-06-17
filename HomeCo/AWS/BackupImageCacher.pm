@@ -115,16 +115,16 @@ sub check_parameters ( $ ) {
 		$config->{DailyCode} = "$year$month$day";
 		
 		# Log files to store
-		_log( 'INFO', 'Will try to store daily $config->{DailyCode} with these files: ' . join( ', ' , @{$config->{backup_files}} ) );
+		_log( 'INFO', "Will try to store daily $config->{DailyCode} with these files: " . join( ', ' , @{$config->{backup_files}} ) );
 	} elsif( $config->{Monthly} ) {
 		$config->{Comment} = 'MONTHLY_' . "$year$month";
 		$config->{DailyCode} = undef;
 
 		# Log files to store
-		_log( 'INFO', 'Will try to store monthly $config->{MonthlyCode} with these files: ' . join( ', ' , @{$config->{backup_files}} ) );
+		_log( 'INFO', "Will try to store monthly $config->{MonthlyCode} with these files: " . join( ', ' , @{$config->{backup_files}} ) );
 	} elsif( $config->{Cleanup} ) {
 		# Log action
-		_log( 'INFO', 'Will try cleanup on monthly $config->{MonthlyCode}' );
+		_log( 'INFO', "Will try cleanup on monthly $config->{MonthlyCode}" );
 	}
 
 	$config->{_checked} = 1;
@@ -278,10 +278,10 @@ sub _backup($) {
 		$config->{AWSSecret}
 	);
 	
+	_check_archive_exists( $config );
+	
 	# Checks vault exists, logs and dies if not as per specs.
 	_check_vault( $glacier, $config );
-	
-	_check_archive_exists( $glacier, $config );
 
 	my $retry = 0;
 	my $archive_id = undef;
@@ -291,7 +291,7 @@ sub _backup($) {
 		
 		my $file_size = 0;
 		# Estimate part size for estimated tarred directory size
-		my $tarred_size = _tar_directory_size( $config->{backup_files} );
+		my $tarred_size = _tar_files_size( $config->{backup_files} );
 		_log( 'INFO', "Estimated tar size to $tarred_size.");
 		my $part_size = $glacier->calculate_multipart_upload_partsize( $tarred_size );
 		_log( 'INFO', "Estimated Glacier part_size to $part_size.");
@@ -307,7 +307,6 @@ sub _backup($) {
 		}
 		
 		if ( $current_upload_id ) {
-
 			my $part_index = 0;
 			my $parts_hash = [];
 	
@@ -324,9 +323,13 @@ sub _backup($) {
 				# Compute last file size, most will be part_size, last might not
 				$file_size += -s $current_part_temp_path;
 				
+				_log( 'INFO', "Part size if " . ( -s $current_part_temp_path ) . " from $current_part_temp_path" );
+				
 				_log( 'INFO', "A part of the archive has been stored and will be uploaded. Vault: $config->{VaultName}, UploadId: $current_upload_id PartSize: $part_size, PartIndex: $part_index, TempPath: $current_part_temp_path");
 				
 				my $retry_part = 0;
+				
+				$parts_hash->[$part_index]='';
 				
 				while ( $retry_part++ <= $config->{RetryBeforeError} && $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
 					_log( 'INFO', "This is my try $retry_part on part $part_index.");
@@ -340,30 +343,34 @@ sub _backup($) {
 						_log( 'INFO', "SUCCESS, uploading part to Glacier completed. Vault: $config->{VaultName}, UploadId: $current_upload_id PartSize: $part_size, PartIndex: $part_index, TempPath: $current_part_temp_path, PartHash: $parts_hash->[$part_index]");
 					}
 					
-					unless( $config->{NoGlacierAPICalls} || $parts_hash->[$part_index] =~ /^[0-9a-f]{64}$/ ) {
-						_log( 'ERROR', 'Not a valid part hash returned from Glacier: $parts_hash->[$part_index].');
+					if( $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
+						unless ( $config->{NoGlacierAPICalls} ) {
+							_log( 'ERROR', 'Not a valid part hash returned from Glacier: $parts_hash->[$part_index].');
+						}
 					} else {
-						# Go to next part index next time
-						$part_index++;
-		
 						# Dispose temp file when not debugging
 						unlink $current_part_temp_path unless $config->{Debug};
 					}
 				}
 				
-				if ( $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
-					# Also $retry_part++ > $config->{RetryBeforeError}
+				if ( $retry_part++ > $config->{RetryBeforeError} ) {
 					if ( $config->{Daily} ) {
 						_logemail( 'WARN', "Retrying a part more than $config->{RetryBeforeError} times for a single part on daily $config->{DailyCode}." );
 					} elsif( $config->{Monthly} ) {
 						_logemail( 'WARN', "Retrying a part more than $config->{RetryBeforeError} times for a single part on monthly $config->{MonthlyCode}." );
 					}
 				}
+				
+				if( $parts_hash->[$part_index] !~ /^[0-9a-f]{64}$/ ) {
+					# Go to next part index next time
+					$part_index++;
+					$parts_hash->[$part_index]='';
+				}
 			});
 	
 			_log( 'INFO', "Will begin tarring files.");
 			# This calls the listener for each part
-			_tar_directory_contents( \*TAR, $config->{backup_files} );
+			_tar_files_contents( \*TAR, $config->{backup_files} );
 	
 			# This could call the listener for the last part
 			(tied *TAR)->write_buffers();
@@ -373,6 +380,9 @@ sub _backup($) {
 			eval {
 				$archive_id = $glacier->multipart_upload_complete( $config->{VaultName}, $current_upload_id, $parts_hash, $file_size ) unless $config->{NoGlacierAPICalls};
 			};
+			if ( $@ ) {
+				_log( 'WARN', $@ );
+			}
 			if ( defined $archive_id ) {
 				_log( 'INFO', "Glacier accepted archive $archive_id will try to store in metadata.");
 				eval {
@@ -408,6 +418,8 @@ sub _backup($) {
 sub _check_vault($$) {
 	my ( $glacier, $config ) = @_;
 	
+	_log( 'INFO', "Will check vault '$config->{VaultName}' exists and is describable.");
+	
 	# Check Vault exists
 	_logdie( 'ERROR', "Describe_vault failed for $config->{VaultName}. Check AWS Credentials, vault config and credentials permissions.")
 		unless $config->{NoGlacierAPICalls} || eval {
@@ -416,10 +428,25 @@ sub _check_vault($$) {
 	};
 }
 
-sub _check_archive_exists($$) {
+sub _check_archive_exists($) {
 	my ( $config ) = @_;
+	my $rows;
 	
-	die( "Implement this!");
+	_log( 'INFO', "Will check if archive already exists." );
+	
+	my ( @row );
+	
+	if ( $config->{Daily} ) {
+		@row = $config->{dbh}->selectrow_array( $config->{SQLExistsDaily}, undef, $config->{DailyCode} );
+	} elsif ( $config->{Monthly} ) {
+		@row = $config->{dbh}->selectrow_array( $config->{SQLExistsDaily}, undef, $config->{MonthlyCode} );
+	} else {
+		_logemail( 'ERROR', 'Unexpected timelapse trying to backup. I know Daily and Monthly backups' );
+	}
+
+	_logdie( 'ERROR', 'Archive already exists trying to run backup!') if ( defined $row[1] );
+	
+	return ( defined $row[1] );
 }
 
 # Split input from file handle into n part_size files
@@ -488,28 +515,30 @@ sub _tar_output_file_size($) {
 	return $size;
 }
 
-sub _tar_directory_size ($) {
+sub _tar_files_size ($) {
 	# File path are somehow limited. If path are to long additional info blocks might be generated by tar, since we are streaming we could get into trouble with maximum file pieces
 	my ( $dirs ) = @_;
 
 	my $size_sum = 0; # adds metadata blocks and archive content size with proper rounding
 
 	# -s returns 0 for directories, which is consistent
-	while ( my $file = shift @$dirs) {
+	foreach my $file ( @$dirs ) {
 		$size_sum += _tar_archive_member_size( -s $file) unless (-d $file);
 	}
 	
-	return _tar_output_file_size( _$size_sum );
+	return _tar_output_file_size( $size_sum );
 }
 
-# TODO bad method name
-sub _tar_directory_contents ($$) {
+sub _tar_files_contents ($$) {
 	my ( $fh, $dirs ) = @_;
 
   my $tar = Archive::Tar::Streamed->new( $fh );
 	my $file;
-
-	$tar->add( $file ) while ( $file = shift @$dirs);
+	
+	foreach my $file ( @$dirs ) {
+		_log( 'INFO', "Add $file to archive." );
+		$tar->add( $file );
+	}
 }
 
 sub _get_local_file_list($$) {
@@ -537,13 +566,14 @@ sub _log($$) {
 
 sub _logemail($$) {
 	my ( $level, $message ) = @_;
-	_log( $level, $message );
+	
+	_log( $level, "THIS WILL BE AN MAIL: $message" );
 }
 
 sub _logfinishandemail($$) {
 	my ( $level, $message ) = @_;
 	
-	print "THIS WILL BE A MAIL: $level, $message\n";
+	_log( $level, "THIS WILL BE AN MAIL: $message" );
 }
 
 sub _logdie($$) {
