@@ -6,7 +6,7 @@ use Carp;
 use lib qw [ .. ];
 
 # Perform only local tests, no connection to Glacier
-my $only_local = 1;
+my $only_local = 0;
 
 BEGIN {
 	# Be sure we can use all required modules for BackupImageCacher
@@ -235,7 +235,7 @@ sub test_resource_not_found_exception() {
 		eval {
 			my $job = $glacier->describe_job( 'non_existent_5234729563454','not_a_job_14890624' );
 		};
-		like ( $@, qr/(ResourceNotFoundException)/, 'describe_job(): ResourceNotFoundException correctly reported.');
+		like ( $@, qr/(describe_job failed with error 404 Not Found at)/, 'describe_job(): ResourceNotFoundException correctly reported.');
 	};
 	if ( $@ ) {
 		BAIL_OUT( 'Unknown error testing for Glacier describe_job exception handling for ResourceNotFoundException.' );
@@ -246,6 +246,11 @@ sub test_directory_with_files_of_size($$$) {
 	my ( $file_sizes, $expected_size, $ok_msg ) = @_;
 
 	my ( $temp_files, $temp_dir ) = &generate_files( $file_sizes );
-	is( HomeCo::AWS::BackupImageCacher::_tar_directory_size( [ $temp_dir ] ), $expected_size, $ok_msg );
+	
+	
+	is( HomeCo::AWS::BackupImageCacher::_tar_files_size(
+		HomeCo::AWS::BackupImageCacher::_get_local_file_list( $temp_dir, '' )
+		) , $expected_size, $ok_msg
+	);
 	&cleanup_files( $temp_files, $temp_dir );
 }

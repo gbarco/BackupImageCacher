@@ -156,7 +156,7 @@ sub open_metadata_store ( $ ) {
 		eval {
 			# Try to select metadata store
 			_log( 'INFO', 'Checking we can read from metadata store.' );
-			$config->{dbh}->do( $config->{SQLSelectTable} );
+			$config->{dbh}->do( $config->{SQLPing} );
 		};
 		if ( $@ ) {
 			# On error try to create
